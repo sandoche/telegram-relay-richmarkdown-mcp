@@ -165,15 +165,7 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
         }
       );
     },
-    {
-      capabilities: {
-        tools: {
-          send_rich_markdown_to_telegram_channel: {
-            description: "Post Rich Markdown to the server's fixed Telegram destination."
-          }
-        }
-      }
-    },
+    {},
     {
       basePath: `/${accessKey}`,
       maxDuration: 60,
