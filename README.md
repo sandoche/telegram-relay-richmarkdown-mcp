@@ -2,11 +2,12 @@
 
 A small, private [Model Context Protocol](https://modelcontextprotocol.io/) server that lets ChatGPT or another MCP client send **Telegram Rich Markdown and photos** to one fixed Telegram destination.
 
-The server is intentionally narrow: it exposes two write tools, cannot choose another chat, and does not provide Telegram administration capabilities.
+The server is intentionally narrow: it exposes two write tools and one read-only connection check, cannot choose another chat, and does not provide Telegram administration capabilities.
 
 ## Features
 
 - Sends Telegram Rich Markdown through `sendRichMessage`.
+- Checks the authenticated MCP connection without sending messages or contacting Telegram.
 - Sends photos through `sendPhoto`: public HTTPS URLs, existing Telegram `file_id` values, or PNG/JPEG byte uploads.
 - Supports headings, lists, task lists, tables, links, quotations, details, spoilers, footnotes, code, and LaTeX formulas.
 - Uses one destination configured by `TELEGRAM_CHANNEL_ID`.
@@ -27,7 +28,7 @@ https://YOUR-DOMAIN/<MCP_ACCESS_TOKEN>/mcp
 
 Treat the complete URL as a password. This capability-URL approach is suitable for a private, single-user deployment. For a public or multi-user integration, replace it with a standards-based OAuth 2.1 authorization flow.
 
-Neither tool accepts a `chat_id`; the destination only comes from the server environment. The server also does not implement message editing, deletion, member management, webhooks, invite links, paid broadcasts, or other Telegram administration methods.
+No tool accepts a `chat_id`; the destination only comes from the server environment. The server also does not implement message editing, deletion, member management, webhooks, invite links, paid broadcasts, or other Telegram administration methods.
 
 Remote media blocks inside Rich Markdown are rejected intentionally. The photo tool sends only to the same fixed destination and shares the existing rate budget and duplicate guard. Image URLs are passed to Telegram, never fetched or DNS-resolved by this server. HTTPS is required; credentials, IP literals, local hostnames, custom ports, and fragments are rejected. This is input screening, not a guarantee about DNS or redirects: Telegram handles remote retrieval. Image data and upstream error descriptions are not logged or echoed in photo errors.
 
@@ -109,6 +110,59 @@ https://YOUR-PROJECT.vercel.app/<MCP_ACCESS_TOKEN>/mcp
 
 Once the GitHub repository is connected, pushes to `main` create production deployments and pull requests create preview deployments.
 
+## Read-only connection check
+
+Call `get_telegram_relay_status` with `{}` before creating a scheduled task that
+needs this connector. It uses the same authenticated MCP endpoint as the sending
+tools; the public `/health` endpoint does not verify the connector connection.
+
+The tool makes **no external requests**, sends no Telegram messages, does not log
+configuration, and neither consumes nor changes the sending rate/duplicate guards.
+Its annotations are `readOnlyHint: true`, `destructiveHint: false`,
+`idempotentHint: true`, and `openWorldHint: false`. It accepts no arguments.
+
+| Result field | Meaning |
+| --- | --- |
+| `ok` | Always `true` on a successful tool response: the authenticated MCP call worked. |
+| `status_version` | Status response contract version, currently `1`. |
+| `telegram_configured` | Both local Telegram settings are nonblank; **not** proof of valid credentials or delivery. |
+| `telegram_api_checked` | Always `false`; Telegram was not contacted. |
+| `message` | Fixed explanation of the result, containing no tokens or destination identifiers. |
+
+A false `telegram_configured` still confirms the MCP connection, but the server
+needs configuration before scheduling sends. A true value does not validate the
+bot token, destination, permissions, Telegram availability, or future delivery.
+Do not send a test message as a substitute for this check.
+
+### Deploy and refresh the existing ChatGPT connection
+
+1. Merge the status-tool PR into `main` after tests pass. No new environment
+   variables, token rotation, destination changes, or endpoint changes are needed.
+2. In the existing Vercel project, verify a **Production / Ready** deployment
+   contains that merge commit. A previous Ready deployment is insufficient. If Git
+   integration does not start a deployment, check the project's Git connection and
+   production branch (`main`), then deploy the merged source. Redeploying an old
+   deployment can redeploy old code. Do not expose the capability URL in logs or PRs.
+3. Open the Telegram Elara MCP connection in [ChatGPT Plugins](https://chatgpt.com/plugins)
+   and select **Refresh**. Confirm `get_telegram_relay_status` appears alongside
+   both existing sending tools. This refresh is a user UI action; deployment alone
+   does not prove ChatGPT has updated its cached tool metadata.
+4. Start a new conversation with Telegram Elara enabled and ask:
+
+   > Call Telegram Elara's get_telegram_relay_status with {}. Report the actual
+   > result. Do not send any Telegram messages or create any scheduled tasks.
+
+5. Record the visible tool name and successful call result. Expect `ok: true`,
+   `status_version: 1`, `telegram_configured: true`, and
+   `telegram_api_checked: false`. If the tool is absent, refresh the connection
+   and retry in a new conversation; if it errors, resolve that error before
+   scheduling. Never claim this ChatGPT verification based only on local tests
+   or a Vercel build.
+
+See [OpenAI's connection and metadata-refresh guide](https://developers.openai.com/plugins/deploy/connect-chatgpt).
+The Refresh flow applies to developer-mode MCP connections; published plugins
+require updating their reviewed metadata snapshot.
+
 ## Photo tool
 
 `send_photo_to_telegram_channel` sends one photo. Call it only after the user explicitly asks to publish that image.
@@ -170,7 +224,7 @@ npm run check
 npm run build
 ```
 
-The tests compile the server-side helpers and use Node's test runner with mocked Telegram responses. They exercise validation, JSON and multipart requests, safe errors/timeouts, duplicate/rate guards, and existing Rich Markdown behavior. **They never publish a real Telegram message.** A live smoke test is a separate, explicitly authorized action after deployment.
+The tests compile the server-side helpers and route and use Node's test runner with mocked Telegram responses. They exercise validation, JSON and multipart requests, safe errors/timeouts, duplicate/rate guards, and existing Rich Markdown behavior. Status tests use the real MCP SDK client, HTTP transport, route authentication, and handler with in-process HTTP delivery. They verify discovery, schemas, calls, missing configuration, repeatability, unchanged sending guards, and zero external fetches. **They never publish a real Telegram message.** The status tool can be verified live without authorizing a Telegram post.
 
 ## Example Rich Markdown
 
