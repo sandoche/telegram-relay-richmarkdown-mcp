@@ -3,6 +3,7 @@ import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 
 import { handlePhotoSend } from "@/lib/photo-tool";
+import { registerStatusTool } from "@/lib/status-tool";
 import { MAX_PHOTO_DATA_URL_LENGTH } from "@/lib/telegram-photo";
 import { checkSendGuard, recordSuccessfulSend } from "@/lib/rate-limit";
 import {
@@ -51,6 +52,7 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
 
   const handler = createMcpHandler(
     (server) => {
+      registerStatusTool(server);
       server.registerTool(
         "send_rich_markdown_to_telegram_channel",
         {

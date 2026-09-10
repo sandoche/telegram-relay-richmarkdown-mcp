@@ -12,7 +12,7 @@
     "build": "next build",
     "start": "next start",
     "check": "tsc --noEmit",
-    "test": "tsc -p tests/tsconfig.json && node --test tests/photo.test.cjs"
+    "test": "tsc -p tests/tsconfig.json && node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.26.0",
