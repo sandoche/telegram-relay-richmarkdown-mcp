@@ -2,6 +2,8 @@ import type { NextRequest } from "next/server";
 import { createMcpHandler } from "mcp-handler";
 import { z } from "zod";
 
+import { handlePhotoSend } from "@/lib/photo-tool";
+import { MAX_PHOTO_DATA_URL_LENGTH } from "@/lib/telegram-photo";
 import { checkSendGuard, recordSuccessfulSend } from "@/lib/rate-limit";
 import {
   constantTimeEqual,
@@ -163,6 +165,43 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             });
           }
         }
+      );
+
+      server.registerTool(
+        "send_photo_to_telegram_channel",
+        {
+          title: "Send Photo to Telegram",
+          description:
+            "Use this only when the user explicitly asks to publish an image to the single Telegram destination configured by this server. Sends one photo with an optional plain-text caption. Provide exactly one of photo (public HTTPS URL or this bot's Telegram file_id) and image_data_url (base64 PNG/JPEG, up to 2 MiB decoded). Local paths and sandbox: links are not accessible. Cannot choose another destination or administer Telegram.",
+          inputSchema: {
+            photo: z.string().min(1).max(4096).optional().describe(
+              "Public HTTPS image URL or Telegram file_id available to this bot. Telegram retrieves the URL; do not use local paths, sandbox: links, or credential-bearing URLs. Omit when using image_data_url."
+            ),
+            image_data_url: z.string().min(1).max(MAX_PHOTO_DATA_URL_LENGTH).optional().describe(
+              "PNG/JPEG bytes encoded as data:image/png;base64,... or data:image/jpeg;base64,... . Maximum decoded size: 2 MiB. Omit when using photo. This is not a local file path or an automatic attachment upload."
+            ),
+            caption: z.string().max(2048).optional().describe(
+              "Optional plain-text caption, at most 1024 Unicode characters. Markdown/HTML formatting is not parsed."
+            ),
+            silent: z.boolean().optional().describe("Send without a notification sound. Defaults to false."),
+            has_spoiler: z.boolean().optional().describe("Hide the photo behind a spoiler. Defaults to false.")
+          },
+          outputSchema: {
+            ok: z.boolean(),
+            message: z.string(),
+            message_id: z.number().int().optional(),
+            date: z.number().int().optional(),
+            file_id: z.string().optional(),
+            retry_after_seconds: z.number().int().optional()
+          },
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true
+          }
+        },
+        handlePhotoSend
       );
     },
     {},
