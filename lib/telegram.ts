@@ -87,42 +87,52 @@ export async function sendTelegramRichMarkdown(options: {
   botToken: string;
   channelId: string;
   markdown: string;
+  messageThreadId?: number;
   silent: boolean;
   isRtl: boolean;
   protectContent: boolean;
   skipEntityDetection: boolean;
 }): Promise<TelegramMessage> {
+  return callTelegramJson<TelegramMessage>(options.botToken, "sendRichMessage", {
+    chat_id: options.channelId,
+    message_thread_id: options.messageThreadId,
+    rich_message: {
+      markdown: options.markdown,
+      is_rtl: options.isRtl,
+      skip_entity_detection: options.skipEntityDetection
+    },
+    disable_notification: options.silent,
+    protect_content: options.protectContent
+  });
+}
+
+export async function callTelegramJson<T>(
+  botToken: string,
+  method: "sendRichMessage" | "createForumTopic",
+  body: Record<string, unknown>
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     // Telegram bot tokens contain a required colon. Do not URL-encode the token path segment.
     const response = await fetch(
-      `https://api.telegram.org/bot${options.botToken}/sendRichMessage`,
+      `https://api.telegram.org/bot${botToken}/${method}`,
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "user-agent": "telegram-relay-richmarkdown-mcp/1.0"
         },
-        body: JSON.stringify({
-          chat_id: options.channelId,
-          rich_message: {
-            markdown: options.markdown,
-            is_rtl: options.isRtl,
-            skip_entity_detection: options.skipEntityDetection
-          },
-          disable_notification: options.silent,
-          protect_content: options.protectContent
-        }),
+        body: JSON.stringify(body),
         cache: "no-store",
         signal: controller.signal
       }
     );
 
-    let result: TelegramResponse<TelegramMessage>;
+    let result: TelegramResponse<T>;
     try {
-      result = (await response.json()) as TelegramResponse<TelegramMessage>;
+      result = (await response.json()) as TelegramResponse<T>;
     } catch {
       throw new TelegramApiError(`Telegram returned an invalid response (HTTP ${response.status}).`);
     }

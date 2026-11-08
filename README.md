@@ -2,7 +2,7 @@
 
 A small, private [Model Context Protocol](https://modelcontextprotocol.io/) server that lets ChatGPT or another MCP client send **Telegram Rich Markdown and photos** to one fixed Telegram destination.
 
-The server is intentionally narrow: it exposes two write tools and one read-only connection check, cannot choose another chat, and does not provide Telegram administration capabilities.
+It also supports creating topics and reading a topic archive for that same chat.
 
 ## Features
 
@@ -10,7 +10,8 @@ The server is intentionally narrow: it exposes two write tools and one read-only
 - Checks the authenticated MCP connection without sending messages or contacting Telegram.
 - Sends photos through `sendPhoto`: public HTTPS URLs, existing Telegram `file_id` values, or PNG/JPEG byte uploads.
 - Supports headings, lists, task lists, tables, links, quotations, details, spoilers, footnotes, code, and LaTeX formulas.
-- Uses one destination configured by `TELEGRAM_CHANNEL_ID`.
+- Uses one destination configured by `TELEGRAM_CHANNEL_ID` and can route sends to topics within that chat.
+- Lists observed topics and reads recent messages with optional persistent storage.
 - Protects the MCP endpoint with a high-entropy capability URL.
 - Keeps remote media embeds blocked in Rich Markdown; images use a separate, validated photo tool.
 - Suppresses accidental duplicate messages.
@@ -28,7 +29,7 @@ https://YOUR-DOMAIN/<MCP_ACCESS_TOKEN>/mcp
 
 Treat the complete URL as a password. This capability-URL approach is suitable for a private, single-user deployment. For a public or multi-user integration, replace it with a standards-based OAuth 2.1 authorization flow.
 
-No tool accepts a `chat_id`; the destination only comes from the server environment. The server also does not implement message editing, deletion, member management, webhooks, invite links, paid broadcasts, or other Telegram administration methods.
+The server takes the chat ID from its environment. The MCP access URL grants access to the topic archive when storage is configured. The optional Telegram webhook uses a separate secret and only records topic activity from the configured numeric chat ID.
 
 Remote media blocks inside Rich Markdown are rejected intentionally. The photo tool sends only to the same fixed destination and shares the existing rate budget and duplicate guard. Image URLs are passed to Telegram, never fetched or DNS-resolved by this server. HTTPS is required; credentials, IP literals, local hostnames, custom ports, and fragments are rejected. This is input screening, not a guarantee about DNS or redirects: Telegram handles remote retrieval. Image data and upstream error descriptions are not logged or echoed in photo errors.
 
@@ -43,6 +44,9 @@ Remote media blocks inside Rich Markdown are rejected intentionally. The photo t
 | `TELEGRAM_SKIP_ENTITY_DETECTION` | No | Defaults to `false`. |
 | `MCP_MAX_MESSAGES_PER_MINUTE` | No | Defaults to `5`; accepted range is 1–30. |
 | `MCP_DUPLICATE_WINDOW_SECONDS` | No | Defaults to `120`; accepted range is 0–600. |
+| `UPSTASH_REDIS_REST_URL` | For topic storage | Upstash Redis REST URL. |
+| `UPSTASH_REDIS_REST_TOKEN` | For topic storage | Upstash Redis REST read/write token. |
+| `TELEGRAM_WEBHOOK_SECRET` | For incoming topic updates | Separate URL-safe secret, 32–256 characters. |
 
 Generate the MCP access token with:
 
@@ -163,6 +167,40 @@ See [OpenAI's connection and metadata-refresh guide](https://developers.openai.c
 The Refresh flow applies to developer-mode MCP connections; published plugins
 require updating their reviewed metadata snapshot.
 
+## Telegram topics
+
+Telegram supports topics in forum supergroups and private bot chats with topic mode enabled. In a forum supergroup, topic creation requires the bot to be an administrator with **Manage Topics**. In a private chat, enable topic mode for the bot via BotFather. See [Telegram's topic API](https://core.telegram.org/bots/api#createforumtopic).
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `list_telegram_topics` | Use `{}`. Returns observed topic IDs and titles when available. |
+| `read_telegram_topic` | Pass `message_thread_id`. Returns newest recorded messages first, 10 by default and up to 20. Pass `next_before_message_id` back as `before_message_id` to read an older page. |
+| `create_telegram_topic` | Pass `name`. Returns the topic's `message_thread_id` and whether it was recorded in the optional archive. |
+| `send_rich_markdown_to_telegram_channel` and `send_photo_to_telegram_channel` | Pass the selected `message_thread_id` from the list or creation result. Omit it for the default destination, including the General topic in a forum supergroup. |
+
+Creating topics and sending with a known topic ID work without the archive. Creation shares the existing best-effort rate and duplicate guards. A topic send can succeed with `history_recorded: false` if the archive is disabled or unavailable. The message has already been accepted by Telegram in that case.
+
+### Enable the topic archive on Vercel
+
+1. Add an [Upstash Redis database](https://vercel.com/marketplace/upstash) to the existing Vercel project. Set its REST URL and read/write token in the environment variables above. Use the exact numeric ID of the Telegram chat in `TELEGRAM_CHANNEL_ID`. Use separate credentials and a test bot for preview deployments that need the archive.
+2. Generate a separate `TELEGRAM_WEBHOOK_SECRET` using `openssl rand -hex 32`. Add it to the production environment and deploy the new code.
+3. Check [getWebhookInfo](https://core.telegram.org/bots/api#getwebhookinfo) before registering `/telegram-webhook` on the production host. Telegram allows one webhook per bot. If the bot already has a webhook, keep it in place and have its handler relay `message` and `edited_message` updates to this endpoint using the separate secret header.
+4. For a bot without a webhook or polling integration, run the command below in a shell with `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_WEBHOOK_URL` set locally. Set the URL to `https://YOUR-PROJECT.vercel.app/telegram-webhook`. Telegram sends the secret in `X-Telegram-Bot-Api-Secret-Token`. The registration preserves pending updates.
+
+```bash
+curl --silent --show-error --fail-with-body \
+  --data-urlencode "url=$TELEGRAM_WEBHOOK_URL" \
+  --data-urlencode "secret_token=$TELEGRAM_WEBHOOK_SECRET" \
+  --data-urlencode 'allowed_updates=["message","edited_message"]' \
+  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook"
+```
+
+Refresh the Telegram Elara connection in ChatGPT after deploying, then start a new chat to pick up the tools and the updated send arguments. The MCP endpoint URL is the same.
+
+The archive records only what the gateway receives or sends to explicit topics. The Bot API cannot enumerate all topics or backfill chat history. To discover an existing topic, send a message there after enabling the webhook. Its name will be available if the gateway sees a creation or rename event. Topic deletion and live open/closed status are outside the archive. Group visibility depends on the bot's role and [Telegram privacy settings](https://core.telegram.org/bots/features#privacy-mode).
+
+Redis keeps the latest 100 observed messages per topic and up to 8,000 characters per message. Text, captions and original outgoing Rich Markdown are stored. Other inbound content is represented by message metadata, and media files are excluded. The archive is retained in Redis until trimmed or cleared. Telegram's protected-content flag applies to Telegram delivery. Access to the MCP URL or Redis credentials can grant access to archived content.
+
 ## Photo tool
 
 `send_photo_to_telegram_channel` sends one photo. Call it only after the user explicitly asks to publish that image.
@@ -174,6 +212,7 @@ require updating their reviewed metadata snapshot.
 | `caption` | Optional **plain text**, at most 1024 Unicode characters. No Markdown/HTML parsing. |
 | `silent` | Optional; defaults to `false`. |
 | `has_spoiler` | Optional; defaults to `false`. |
+| `message_thread_id` | Optional topic ID in the configured chat. |
 
 Provide **exactly one** of `photo` and `image_data_url`. The result contains `message_id`, `date`, and a reusable `file_id` when returned by Telegram. `TELEGRAM_PROTECT_CONTENT` applies to photos too. No new environment variables are required.
 

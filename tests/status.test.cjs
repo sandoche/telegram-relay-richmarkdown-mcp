@@ -72,7 +72,8 @@ test("authenticated tools/list preserves send tools and exposes read-only status
   const client = await connect(t);
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
-    "get_telegram_relay_status", "send_photo_to_telegram_channel", "send_rich_markdown_to_telegram_channel"
+    "create_telegram_topic", "get_telegram_relay_status", "list_telegram_topics", "read_telegram_topic",
+    "send_photo_to_telegram_channel", "send_rich_markdown_to_telegram_channel"
   ]);
   const status = tools.find(tool => tool.name === "get_telegram_relay_status");
   assert.deepEqual(status.annotations, {

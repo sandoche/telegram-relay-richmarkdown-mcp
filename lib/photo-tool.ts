@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { checkSendGuard, recordSuccessfulSend } from "./rate-limit";
 import { readBooleanEnv, readIntegerEnv, sha256 } from "./security";
+import { recordRelayTopic } from "./topic-store";
 import { TelegramApiError } from "./telegram";
 import { type PhotoInput, sendTelegramPhoto, validatePhotoInput } from "./telegram-photo";
 
@@ -22,6 +23,7 @@ export async function handlePhotoSend(input: PhotoInput) {
   const validation = validatePhotoInput(input);
   if (!validation.valid) return toolError(validation.message);
   const { photo } = validation;
+  const { message_thread_id } = input;
   const caption = input.caption ?? "";
   const silent = input.silent ?? false;
   const hasSpoiler = input.has_spoiler ?? false;
@@ -29,7 +31,7 @@ export async function handlePhotoSend(input: PhotoInput) {
   const source = photo.kind === "reference"
     ? photo.value
     : createHash("sha256").update(photo.bytes).digest("hex");
-  const payloadHash = sha256(JSON.stringify({ method: "sendPhoto", kind: photo.kind, source, caption, silent, hasSpoiler }));
+  const payloadHash = sha256(JSON.stringify({ method: "sendPhoto", kind: photo.kind, source, caption, silent, hasSpoiler, message_thread_id }));
   const now = Date.now();
   const guard = checkSendGuard({
     now, payloadHash, duplicateWindowSeconds,
@@ -45,11 +47,25 @@ export async function handlePhotoSend(input: PhotoInput) {
   }
   try {
     const message = await sendTelegramPhoto({
-      botToken, channelId, photo, caption, silent, hasSpoiler,
+      botToken, channelId, messageThreadId: message_thread_id, photo, caption, silent, hasSpoiler,
       protectContent: readBooleanEnv("TELEGRAM_PROTECT_CONTENT", true)
     });
     recordSuccessfulSend({ now: Date.now(), payloadHash, duplicateWindowSeconds });
-    const output = { ok: true, message: "Photo sent to the configured Telegram destination.", ...message };
+    const output = {
+      ok: true,
+      message: "Photo sent to the configured Telegram destination.",
+      ...message,
+      ...(message_thread_id === undefined ? {} : {
+        message_thread_id,
+        history_recorded: await recordRelayTopic({
+          threadId: message_thread_id,
+          message: {
+            message_id: message.message_id, date: message.date,
+            kind: "photo", sender: "Gateway", text: caption
+          }
+        })
+      })
+    };
     return {
       content: [{ type: "text" as const, text: output.message }],
       structuredContent: output

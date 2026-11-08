@@ -103,7 +103,7 @@ test("sends URL photos only to Telegram using JSON with literal token colon", as
 });
 test("uploads real multipart PNG bytes without manually setting the boundary", async () => {
   const photo = validatePhotoInput({ image_data_url: dataUrl }).photo;
-  await sendTelegramPhoto({ ...options, photo, silent: true, hasSpoiler: true });
+  await sendTelegramPhoto({ ...options, photo, silent: true, hasSpoiler: true, messageThreadId: 123 });
   const init = calls[0][1];
   assert.ok(init.body instanceof FormData);
   assert.equal(init.headers["content-type"], undefined);
@@ -111,6 +111,7 @@ test("uploads real multipart PNG bytes without manually setting the boundary", a
   assert.equal(init.body.get("has_spoiler"), "true");
   assert.equal(init.body.get("protect_content"), "true");
   assert.equal(init.body.get("chat_id"), options.channelId);
+  assert.equal(init.body.get("message_thread_id"), "123");
   const file = init.body.get("photo");
   assert.equal(file.type, "image/png");
   assert.equal(file.name, "photo.png");
