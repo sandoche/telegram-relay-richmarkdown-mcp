@@ -13,6 +13,7 @@ export type PhotoInput = {
   caption?: string;
   silent?: boolean;
   has_spoiler?: boolean;
+  message_thread_id?: number;
 };
 
 export type PreparedPhoto =
@@ -95,9 +96,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function photoFailureMessage(code: number): string {
+function photoFailureMessage(code: number, messageThreadId?: number): string {
   switch (code) {
-    case 400: return "Telegram rejected the photo. Check the image URL or file_id, image format, size, and dimensions.";
+    case 400: return messageThreadId === undefined
+      ? "Telegram rejected the photo. Check the image URL or file_id, image format, size, and dimensions."
+      : "Telegram rejected the photo. Check the photo source and that the selected Telegram topic exists and is open.";
     case 401: return "Telegram authentication failed. Check TELEGRAM_BOT_TOKEN.";
     case 403: return "Telegram denied the photo send. Check the bot's permissions for the configured destination.";
     case 429: return "Telegram's rate limit was reached. Wait before retrying.";
@@ -108,6 +111,7 @@ function photoFailureMessage(code: number): string {
 export async function sendTelegramPhoto(options: {
   botToken: string;
   channelId: string;
+  messageThreadId?: number;
   photo: PreparedPhoto;
   caption: string;
   silent: boolean;
@@ -116,6 +120,7 @@ export async function sendTelegramPhoto(options: {
 }): Promise<TelegramPhotoMessage> {
   const fields = {
     chat_id: options.channelId,
+    ...(options.messageThreadId === undefined ? {} : { message_thread_id: options.messageThreadId }),
     caption: options.caption,
     disable_notification: options.silent,
     has_spoiler: options.hasSpoiler,
@@ -154,7 +159,7 @@ export async function sendTelegramPhoto(options: {
       const parameters = isRecord(payload.parameters) ? payload.parameters : undefined;
       const retryAfter = parameters?.retry_after;
       // Telegram descriptions may echo source URLs, captions, or tokens. Do not forward them.
-      throw new TelegramApiError(photoFailureMessage(code), {
+      throw new TelegramApiError(photoFailureMessage(code, options.messageThreadId), {
         errorCode: code,
         retryAfterSeconds: typeof retryAfter === "number" && Number.isInteger(retryAfter) && retryAfter > 0 ? retryAfter : undefined
       });

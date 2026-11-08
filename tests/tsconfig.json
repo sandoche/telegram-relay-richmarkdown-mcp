@@ -12,5 +12,5 @@
     "paths": { "@/*": ["../*"] },
     "outDir": ".compiled"
   },
-  "include": ["../lib/**/*.ts", "../app/[accessKey]/[transport]/route.ts"]
+  "include": ["../lib/**/*.ts", "../app/[accessKey]/[transport]/route.ts", "../app/telegram-webhook/route.ts"]
 }

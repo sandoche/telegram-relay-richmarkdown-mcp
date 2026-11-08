@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { handlePhotoSend } from "@/lib/photo-tool";
 import { registerStatusTool } from "@/lib/status-tool";
+import { recordRelayTopic, threadId } from "@/lib/topic-store";
+import { registerTopicTools, topicDestination } from "@/lib/topic-tools";
 import { MAX_PHOTO_DATA_URL_LENGTH } from "@/lib/telegram-photo";
 import { checkSendGuard, recordSuccessfulSend } from "@/lib/rate-limit";
 import {
@@ -53,13 +55,15 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
   const handler = createMcpHandler(
     (server) => {
       registerStatusTool(server);
+      registerTopicTools(server);
       server.registerTool(
         "send_rich_markdown_to_telegram_channel",
         {
           title: "Send Rich Markdown to Telegram",
           description:
-            "Use this only when the user explicitly asks to publish a message to the single Telegram destination configured by this server. The tool creates an external Telegram post using Telegram Rich Markdown; it cannot choose another destination or administer Telegram.",
+            "Use this only when the user explicitly asks to publish a message to the single Telegram destination configured by this server. The tool creates an external Telegram post using Telegram Rich Markdown; it can select a topic within that chat.",
           inputSchema: {
+            message_thread_id: topicDestination,
             markdown: z
               .string()
               .min(1)
@@ -81,6 +85,8 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             message: z.string(),
             message_id: z.number().int().optional(),
             date: z.number().int().optional(),
+            message_thread_id: threadId.optional(),
+            history_recorded: z.boolean().optional(),
             retry_after_seconds: z.number().int().optional()
           },
           annotations: {
@@ -90,7 +96,7 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             openWorldHint: false
           }
         },
-        async ({ markdown, silent, is_rtl }) => {
+        async ({ markdown, silent, is_rtl, message_thread_id }) => {
           const botToken = process.env.TELEGRAM_BOT_TOKEN;
           const channelId = process.env.TELEGRAM_CHANNEL_ID;
 
@@ -110,7 +116,7 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             600
           );
           const payloadHash = sha256(
-            JSON.stringify({ markdown, silent: silent ?? false, isRtl: is_rtl ?? false })
+            JSON.stringify({ markdown, silent: silent ?? false, isRtl: is_rtl ?? false, message_thread_id })
           );
           const now = Date.now();
           const guard = checkSendGuard({
@@ -132,6 +138,7 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             const telegramMessage = await sendTelegramRichMarkdown({
               botToken,
               channelId,
+              messageThreadId: message_thread_id,
               markdown,
               silent: silent ?? false,
               isRtl: is_rtl ?? false,
@@ -145,7 +152,17 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
               ok: true,
               message: "Rich Markdown message sent to the configured Telegram destination.",
               message_id: telegramMessage.message_id,
-              date: telegramMessage.date
+              date: telegramMessage.date,
+              ...(message_thread_id === undefined ? {} : {
+                message_thread_id,
+                history_recorded: await recordRelayTopic({
+                  threadId: message_thread_id,
+                  message: {
+                    message_id: telegramMessage.message_id, date: telegramMessage.date,
+                    kind: "rich_markdown", sender: "Gateway", text: markdown
+                  }
+                })
+              })
             };
 
             return {
@@ -174,8 +191,9 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
         {
           title: "Send Photo to Telegram",
           description:
-            "Use this only when the user explicitly asks to publish an image to the single Telegram destination configured by this server. Sends one photo with an optional plain-text caption. Provide exactly one of photo (public HTTPS URL or this bot's Telegram file_id) and image_data_url (base64 PNG/JPEG, up to 2 MiB decoded). Local paths and sandbox: links are not accessible. Cannot choose another destination or administer Telegram.",
+            "Use this only when the user explicitly asks to publish an image to the single Telegram destination configured by this server. Sends one photo with an optional plain-text caption. Provide exactly one of photo (public HTTPS URL or this bot's Telegram file_id) and image_data_url (base64 PNG/JPEG, up to 2 MiB decoded). Local paths and sandbox: links are not accessible. Can select a topic within the configured chat.",
           inputSchema: {
+            message_thread_id: topicDestination,
             photo: z.string().min(1).max(4096).optional().describe(
               "Public HTTPS image URL or Telegram file_id available to this bot. Telegram retrieves the URL; do not use local paths, sandbox: links, or credential-bearing URLs. Omit when using image_data_url."
             ),
@@ -193,6 +211,8 @@ async function route(request: NextRequest, context: RouteContext): Promise<Respo
             message: z.string(),
             message_id: z.number().int().optional(),
             date: z.number().int().optional(),
+            message_thread_id: threadId.optional(),
+            history_recorded: z.boolean().optional(),
             file_id: z.string().optional(),
             retry_after_seconds: z.number().int().optional()
           },
